@@ -1,0 +1,16 @@
+# Binaries produced by go build
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/bin/
+crochet-app
+
+# Environment variable files (secrets)
+.env
+*.env
+
+# IDE files
+.vscode/
+.idea/
