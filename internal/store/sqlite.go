@@ -26,8 +26,17 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		id TEXT PRIMARY KEY,
 		product_name TEXT NOT NULL,
 		product_price REAL NOT NULL,
-		store_id TEXT NOT NULL
-	);`
+		store_id TEXT NOT NULL,
+		stock INTEGER NOT NULL DEFAULT 0
+	);
+
+	CREATE TABLE IF NOT EXISTS orders (
+       id INTEGER PRIMARY KEY AUTOINCREMENT,
+       product_id TEXT NOT NULL,
+       quantity INTEGER NOT NULL,
+       customer_email TEXT NOT NULL,
+       FOREIGN KEY (product_id) REFERENCES products(id)
+    );`
 
 	if _, err := db.Exec(query); err != nil {
 		return nil, fmt.Errorf("failed to create products table: %w", err)
@@ -114,5 +123,49 @@ func (s *SQLiteStore) Close() error {
 	if s.db != nil {
 		return s.db.Close()
 	}
+	return nil
+}
+
+// CreateOrderTx handles deducting stock and inserting an order atomically.
+func (s *SQLiteStore) CreateOrderTx(ctx context.Context, productID string, quantity int, customerEmail string) error {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{
+		Isolation: sql.LevelDefault,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to begin tx: %w", err)
+	}
+
+	// Safely rollback if any operation fails before Commit
+	defer tx.Rollback()
+
+	// 1. Deduct stock using the transaction handle (tx)
+	res, err := tx.ExecContext(ctx, `
+        UPDATE products 
+        SET stock = stock - ? 
+        WHERE id = ? AND stock >= ?`,
+		quantity, productID, quantity,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update stock: %w", err)
+	}
+
+	rowsAffected, err := res.RowsAffected()
+	if err != nil || rowsAffected == 0 {
+		return fmt.Errorf("insufficient stock or product not found")
+	}
+
+	_, err = tx.ExecContext(ctx, `
+        INSERT INTO orders (product_id, quantity, customer_email) 
+        VALUES (?, ?, ?)`,
+		productID, quantity, customerEmail,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to insert order: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit tx: %w", err)
+	}
+
 	return nil
 }
