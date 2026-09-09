@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"Crochet/internal/auth"
 	"Crochet/internal/queue"
 	"encoding/json"
 	"fmt"
@@ -21,6 +22,13 @@ func HandleGetProducts(repo domain.ProductRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		storeID := r.URL.Query().Get("storeID")
 
+		// If query param isn't set, try to get storeID from authenticated context
+		if storeID == "" {
+			if user, err := auth.UserFromContext(r.Context()); err == nil {
+				storeID = user.StoreID
+			}
+		}
+
 		products, err := repo.GetProducts(r.Context(), storeID)
 		if err != nil {
 			http.Error(w, "Failed to fetch products", http.StatusInternalServerError)
@@ -34,11 +42,19 @@ func HandleGetProducts(repo domain.ProductRepository) http.HandlerFunc {
 
 func HandleAddProduct(repo domain.ProductRepository, taskQ *queue.TaskQueue) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		user, err := auth.UserFromContext(r.Context())
+		if err != nil {
+			http.Error(w, "Unauthorized access", http.StatusUnauthorized)
+			return
+		}
+
 		var p domain.Product
 		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 			http.Error(w, fmt.Sprintf("Invalid payload: %v", err), http.StatusBadRequest)
 			return
 		}
+
+		p.StoreID = user.StoreID
 
 		if err := repo.AddProduct(r.Context(), p); err != nil {
 			http.Error(w, "Failed to save product", http.StatusInternalServerError)
@@ -76,6 +92,12 @@ func HandleDeleteProduct(repo domain.ProductRepository) http.HandlerFunc {
 
 func HandleUpdateProduct(repo domain.ProductRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		user, err := auth.UserFromContext(r.Context())
+		if err != nil {
+			http.Error(w, "Unauthorized access", http.StatusUnauthorized)
+			return
+		}
+
 		id := r.PathValue("id")
 		if id == "" {
 			http.Error(w, "Missing product ID", http.StatusBadRequest)
@@ -90,6 +112,7 @@ func HandleUpdateProduct(repo domain.ProductRepository) http.HandlerFunc {
 
 		// Ensure the struct ID matches the URL path ID
 		p.ID = id
+		p.StoreID = user.StoreID
 
 		if err := repo.UpdateProduct(r.Context(), id, p); err != nil {
 			http.Error(w, err.Error(), http.StatusNotFound)

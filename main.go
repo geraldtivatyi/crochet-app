@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -32,12 +33,14 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	// Go 1.22+ method-based routing
+	// --- 1. Public Routes ---
 	mux.HandleFunc("GET /health", handler.HandleHealth())
 	mux.HandleFunc("GET /products", handler.HandleGetProducts(sqStore))
-	mux.HandleFunc("POST /products", handler.HandleAddProduct(sqStore, taskQ))
-	mux.HandleFunc("DELETE /products/{id}", handler.HandleDeleteProduct(sqStore))
-	mux.HandleFunc("PUT /products/{id}", handler.HandleUpdateProduct(sqStore))
+
+	// --- 2. Protected Routes (Require Authentication) ---
+	mux.Handle("POST /products", middleware.RequireAuth(handler.HandleAddProduct(sqStore, taskQ)))
+	mux.Handle("DELETE /products/{id}", middleware.RequireAuth(handler.HandleDeleteProduct(sqStore)))
+	mux.Handle("PUT /products/{id}", middleware.RequireAuth(handler.HandleUpdateProduct(sqStore)))
 
 	// Intentional crash route to test recovery middleware
 	mux.HandleFunc("GET /panic-test", func(w http.ResponseWriter, r *http.Request) {
@@ -45,7 +48,7 @@ func main() {
 		_ = *nilPointer // Triggers an intentional panic!
 	})
 
-	// Wrap the entire Mux router with Recoverer (outermost) and Logger
+	// Wrap the entire Mux router with global middleware (Recoverer & Logger)
 	wrappedMux := applyMiddleware(mux,
 		middleware.Recoverer, // 1. Catches crashes across all routes
 		middleware.Logger,    // 2. Logs execution time & status code
@@ -55,6 +58,8 @@ func main() {
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = ":8080" // Default fallback if not set
+	} else if !strings.HasPrefix(port, ":") {
+		port = ":" + port // Guarantees leading colon (e.g., "8080" -> ":8080")
 	}
 
 	server := &http.Server{
