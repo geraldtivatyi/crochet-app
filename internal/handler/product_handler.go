@@ -3,6 +3,8 @@ package handler
 import (
 	"Crochet/internal/auth"
 	"Crochet/internal/queue"
+	"Crochet/internal/response"
+	"Crochet/internal/validator"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -35,8 +37,7 @@ func HandleGetProducts(repo domain.ProductRepository) http.HandlerFunc {
 			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(products)
+		response.JSON(w, http.StatusOK, products)
 	}
 }
 
@@ -56,8 +57,16 @@ func HandleAddProduct(repo domain.ProductRepository, taskQ *queue.TaskQueue) htt
 
 		p.StoreID = user.StoreID
 
+		// 1. Validate payload fields
+		v := validator.New()
+		if validator.ValidateProduct(v, p); !v.Valid() {
+			response.ValidationError(w, v.Errors)
+			return
+		}
+
+		// 2. Save valid product to store
 		if err := repo.AddProduct(r.Context(), p); err != nil {
-			http.Error(w, "Failed to save product", http.StatusInternalServerError)
+			response.Error(w, http.StatusInternalServerError, "Failed to save product to database")
 			return
 		}
 
@@ -66,10 +75,7 @@ func HandleAddProduct(repo domain.ProductRepository, taskQ *queue.TaskQueue) htt
 			Action:    "CREATED",
 		})
 
-		// 3. Return HTTP 201 Created immediately to the client
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(p)
+		response.JSON(w, http.StatusCreated, p)
 	}
 }
 

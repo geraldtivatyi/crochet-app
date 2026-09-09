@@ -36,6 +36,7 @@ func main() {
 	// --- 1. Public Routes ---
 	mux.HandleFunc("GET /health", handler.HandleHealth())
 	mux.HandleFunc("GET /products", handler.HandleGetProducts(sqStore))
+	mux.HandleFunc("POST /orders", handler.HandleCreateOrder(sqStore, taskQ))
 
 	// --- 2. Protected Routes (Require Authentication) ---
 	mux.Handle("POST /products", middleware.RequireAuth(handler.HandleAddProduct(sqStore, taskQ)))
